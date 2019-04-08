@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strconv"
 )
 
@@ -28,9 +29,12 @@ type Job struct {
 	Base    string
 }
 
-type jobBuild struct {
-	Number int64
-	URL    string
+type JobBuild struct {
+	Number   int64  `json:"number"`
+	URL      string `json:"url"`
+	Duration int64  `json:"duration"`
+	QueueId  int64  `json:"queueId"`
+	Result   string `json:"result"`
 }
 
 type job struct {
@@ -52,14 +56,14 @@ type parameterDefinition struct {
 type jobResponse struct {
 	Actions            []generalObj
 	Buildable          bool `json:"buildable"`
-	Builds             []jobBuild
+	Builds             []JobBuild
 	Color              string      `json:"color"`
 	ConcurrentBuild    bool        `json:"concurrentBuild"`
 	Description        string      `json:"description"`
 	DisplayName        string      `json:"displayName"`
 	DisplayNameOrNull  interface{} `json:"displayNameOrNull"`
 	DownstreamProjects []job       `json:"downstreamProjects"`
-	FirstBuild         jobBuild
+	FirstBuild         JobBuild
 	HealthReport       []struct {
 		Description   string `json:"description"`
 		IconClassName string `json:"iconClassName"`
@@ -68,13 +72,13 @@ type jobResponse struct {
 	} `json:"healthReport"`
 	InQueue               bool     `json:"inQueue"`
 	KeepDependencies      bool     `json:"keepDependencies"`
-	LastBuild             jobBuild `json:"lastBuild"`
-	LastCompletedBuild    jobBuild `json:"lastCompletedBuild"`
-	LastFailedBuild       jobBuild `json:"lastFailedBuild"`
-	LastStableBuild       jobBuild `json:"lastStableBuild"`
-	LastSuccessfulBuild   jobBuild `json:"lastSuccessfulBuild"`
-	LastUnstableBuild     jobBuild `json:"lastUnstableBuild"`
-	LastUnsuccessfulBuild jobBuild `json:"lastUnsuccessfulBuild"`
+	LastBuild             JobBuild `json:"lastBuild"`
+	LastCompletedBuild    JobBuild `json:"lastCompletedBuild"`
+	LastFailedBuild       JobBuild `json:"lastFailedBuild"`
+	LastStableBuild       JobBuild `json:"lastStableBuild"`
+	LastSuccessfulBuild   JobBuild `json:"lastSuccessfulBuild"`
+	LastUnstableBuild     JobBuild `json:"lastUnstableBuild"`
+	LastUnsuccessfulBuild JobBuild `json:"lastUnsuccessfulBuild"`
 	Name                  string   `json:"name"`
 	NextBuildNumber       int64    `json:"nextBuildNumber"`
 	Property              []struct {
@@ -107,7 +111,7 @@ func (j *Job) GetBuild(id int64) *Build {
 }
 
 func (j *Job) getBuildByType(buildType string) *Build {
-	allowed := map[string]jobBuild{
+	allowed := map[string]JobBuild{
 		"lastStableBuild":     j.Raw.LastStableBuild,
 		"lastSuccessfulBuild": j.Raw.LastSuccessfulBuild,
 		"lastBuild":           j.Raw.LastBuild,
@@ -158,11 +162,12 @@ func (j *Job) GetLastCompletedBuild() *Build {
 }
 
 // Returns All Builds with Number and URL
-func (j *Job) GetAllBuildIds() []jobBuild {
+func (j *Job) GetAllBuildIds() []JobBuild {
 	var buildsResp struct {
-		Builds []jobBuild `json:"allBuilds"`
+		Builds []JobBuild `json:"allBuilds"`
 	}
-	j.Jenkins.Requester.GetJSON(j.Base, &buildsResp, map[string]string{"tree": "allBuilds[number,url]"})
+	j.Jenkins.Requester.GetJSON(j.Base, &buildsResp, map[string]string{"tree": "allBuilds[number,url,queueId," +
+		"duration,result]"})
 	return buildsResp.Builds
 }
 
@@ -281,21 +286,29 @@ func (j *Job) HasQueuedBuild() {
 
 }
 
-func (j *Job) InvokeSimple(params map[string]string) error {
+func (j *Job) InvokeSimple(params map[string]string) (int, error) {
 	endpoint := "/build"
-	if len(j.GetParameters()) > 0 {
+	if len(params) > 0 {
 		endpoint = "/buildWithParameters"
 	}
+
 	data := url.Values{}
 	for k, v := range params {
 		data.Set(k, v)
 	}
 	resp := j.Jenkins.Requester.Post(j.Base+endpoint, bytes.NewBufferString(data.Encode()), nil, nil)
-	if resp.StatusCode != 200 || resp.StatusCode != 201 {
+
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
 		// @todo: explain kind of error
-		return fmt.Errorf("could not invoke job %s", j.GetName())
+		return -1, fmt.Errorf("could not invoke job %s", j.GetName())
 	}
-	return nil
+
+	location := resp.Header.Get("Location")
+	regex, _ := regexp.Compile(`queue/item/(\d+)`)
+	queueNumberString := regex.FindStringSubmatch(location)
+	queueNumber, err := strconv.Atoi(queueNumberString[1])
+
+	return queueNumber, err
 }
 
 func (j *Job) Invoke(files []string, skipIfRunning bool, params map[string]string, cause string, securityToken string) bool {

@@ -164,12 +164,13 @@ func (j *Jenkins) DeleteJob(name string) bool {
 
 // Invoke a job.
 // First parameter job name, second parameter is optional Build parameters.
-func (j *Jenkins) BuildJob(name string, options ...interface{}) error {
+func (j *Jenkins) BuildJob(name string, options ...interface{}) (int, error) {
 	job := Job{Jenkins: j, Raw: new(jobResponse), Base: "/job/" + name}
 	var params map[string]string
 	if len(options) > 0 {
 		params, _ = options[0].(map[string]string)
 	}
+
 	return job.InvokeSimple(params)
 }
 
@@ -217,7 +218,7 @@ func (j *Jenkins) GetAllNodes() []*Node {
 // There are only build IDs here,
 // To get all the other info of the build use jenkins.GetBuild(job,buildNumber)
 // or job.GetBuild(buildNumber)
-func (j *Jenkins) GetAllBuildIds(job string) []jobBuild {
+func (j *Jenkins) GetAllBuildIds(job string) []JobBuild {
 	jobObj := j.GetJob(job)
 	if jobObj != nil {
 		return jobObj.GetAllBuildIds()
